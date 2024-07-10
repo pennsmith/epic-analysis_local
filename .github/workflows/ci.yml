@@ -1,0 +1,519 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2023 Christopher Dilks
+
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  ebeam_en: 18
+  pbeam_en: 275
+  root: root -b -q
+  root_no_delphes: root -b -q macro/ci/define_exclude_delphes.C 
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+
+# BUILD ---------------------------------------------------------------------------
+  build_all:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        recipe: 
+          - release
+          # - debug ### disabled, since was only used for `valgrind` CI tests
+    steps:
+      - uses: actions/checkout@v3
+      - uses: cvmfs-contrib/github-action-cvmfs@v3
+      - uses: eic/run-cvmfs-osg-eic-shell@main
+        with:
+          platform-release: "jug_xl:nightly"
+          run: |
+            echo "[CI] install delphes"
+            deps/install_delphes.sh
+            echo "[CI] build epic-analysis"
+            source environ.sh
+            make ${{matrix.recipe}}
+      - uses: actions/upload-artifact@v3
+        with:
+          name: x_build_${{matrix.recipe}}
+          retention-days: 1
+          path: |
+            # epic-analysis
+            lib
+            src/*Dict.cxx
+            # delphes
+            deps/delphes
+            external
+            # mstwpdf
+            deps/mstwpdf/*.o
+            deps/mstwpdf/*.so
+            # adage
+            deps/adage/lib
+            deps/adage/src/*Dict.cxx
+
+  build_no_delphes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: cvmfs-contrib/github-action-cvmfs@v3
+      - uses: eic/run-cvmfs-osg-eic-shell@main
+        with:
+          platform-release: "jug_xl:nightly"
+          run: |
+            echo "[CI] build epic-analysis"
+            source environ.sh
+            EXCLUDE_DELPHES=1 make release
+      - uses: actions/upload-artifact@v3
+        with:
+          name: x_build_no_delphes
+          retention-days: 1
+          path: |
+            # epic-analysis
+            lib
+            src/*Dict.cxx
+            # mstwpdf
+            deps/mstwpdf/*.o
+            deps/mstwpdf/*.so
+            # adage
+            deps/adage/lib
+            deps/adage/src/*Dict.cxx
+
+# DELPHES ---------------------------------------------------------------------------
+
+# run delphes on a hepmc file
+  delphes_fastsim:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { id: 1,    options: --version hepmc.pythia6 --no-radcor --limit 5 --num-hepmc-events 15000 --minQ2 1    } # max limit=30
+          - { id: 10,   options: --version hepmc.pythia6 --no-radcor --limit 5 --num-hepmc-events 15000 --minQ2 10   } # max limit=40
+          - { id: 100,  options: --version hepmc.pythia6 --no-radcor --limit 5 --num-hepmc-events 15000 --minQ2 100  } # max limit=50
+          - { id: 1000, options: --version hepmc.pythia6 --no-radcor --limit 5 --num-hepmc-events 15000 --minQ2 1000 } # max limit=60
+    steps:
+      - uses: actions/checkout@v3
+      - uses: cvmfs-contrib/github-action-cvmfs@v3
+      - uses: eic/run-cvmfs-osg-eic-shell@main
+        env:
+          S3_ACCESS_KEY: ${{secrets.S3_ACCESS_KEY}}
+          S3_SECRET_KEY: ${{secrets.S3_SECRET_KEY}}
+        with:
+          platform-release: "jug_xl:nightly"
+          setup: environ.sh
+          run: |
+            echo "[CI] install delphes"
+            deps/install_delphes.sh
+            echo "[CI] download HEPMC files and run Delphes"
+            s3tools/add-host.sh
+            s3tools/s3tool.rb \
+              --energy ${{env.ebeam_en}}x${{env.pbeam_en}} \
+              --output ci \
+              --config datarec/ci/delphes_${{matrix.id}}.config \
+              ${{matrix.options}}
+      - uses: actions/upload-artifact@v3
+        with:
+          name: x_fastsim_delphes
+          retention-days: 1
+          path: datarec
+
+# DOWNLOAD FULLSIM ---------------------------------------------------------------------------
+
+# download full simulation files and make config
+
+  download_fullsim:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { id: epic_latest,   options: --version epic.latest             --limit 20 --detector craterlake --no-radcor }
+          - { id: epic_previous, options: --version epic.previous           --limit 20 --detector craterlake --no-radcor }
+          - { id: ecce,          options: --version ecce.22.1               --limit 40 }
+          - { id: athena,        options: --version athena.deathvalley-v1.0 --limit 20 }
+    steps:
+      - uses: actions/checkout@v3
+      - uses: cvmfs-contrib/github-action-cvmfs@v3
+      - uses: eic/run-cvmfs-osg-eic-shell@main
+        env:
+          S3_ACCESS_KEY: ${{secrets.S3_ACCESS_KEY}}
+          S3_SECRET_KEY: ${{secrets.S3_SECRET_KEY}}
+        with:
+          platform-release: "jug_xl:nightly"
+          setup: environ.sh
+          run: |
+            echo "[CI] download files from S3"
+            s3tools/add-host.sh
+            s3tools/s3tool.rb \
+              --energy ${{env.ebeam_en}}x${{env.pbeam_en}} \
+              --output ${{matrix.id}} \
+              --mode   s \
+              --config s3files.config \
+              ${{matrix.options}}
+            echo "[CI] cat config file"
+            cat s3files.config
+      - uses: actions/upload-artifact@v3
+        with:
+          name: x_fullsim_${{matrix.id}}
+          retention-days: 1
+          path: |
+            s3files.config
+            datarec
+
+# ANALYSIS ---------------------------------------------------------------------------
+
+# run analysis macros matrix for fastsim
+  analysis_fastsim:
+    needs: 
+      - build_all
+      - delphes_fastsim
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        aname: [x_q2, p_eta, yRatio, single_bin]
+        recon: [Ele]
+        include:
+          - { aname: x_q2, recon: Mixed }
+          - { aname: x_q2, recon: JB }
+          - { aname: x_q2, recon: DA }
+          - { aname: x_q2, recon: Sigma }
+          - { aname: x_q2, recon: eSigma }
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/download-artifact@v3
+        with:
+          name: x_build_release
+      - uses: actions/download-artifact@v3
+        with:
+          name: x_fastsim_delphes
+          path: x_fastsim_delphes
+      - uses: cvmfs-contrib/github-action-cvmfs@v3
+      - uses: eic/run-cvmfs-osg-eic-shell@main
+        with:
+          platform-release: "jug_xl:nightly"
+          setup: environ.sh
+          run: |
+            echo "[CI] job matrix params:"
+            echo "aname = ${{matrix.aname}}"
+            echo "recon = ${{matrix.recon}}"
+            echo "[CI] Delphes artifacts"
+            ls -R x_fastsim_delphes
+            echo "[CI] unpack Delphes artifacts"
+            mv -v x_fastsim_delphes/ci datarec/
+            echo "[CI] generate combined config file"
+            s3tools/src/generate-config-file.rb delphes.config ${{env.ebeam_en}}x${{env.pbeam_en}} datarec/ci/delphes*.config.list
+            echo "[CI] cat delphes.config"
+            cat delphes.config
+            echo "[CI] ANALYSIS MACRO"
+            ${{env.root}} 'macro/ci/analysis_${{matrix.aname}}.C("delphes.config","fastsim.${{matrix.aname}}.${{matrix.recon}}","${{matrix.recon}}")'
+      - uses: actions/upload-artifact@v3
+        with:
+          name: analysis
+          retention-days: 7
+          path: out
+
+# run analysis macros matrix for full simulation
+  analysis_fullsim:
+    needs: 
+      - build_no_delphes
+      - download_fullsim
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        detector:
+          - epic_latest
+          - epic_previous
+          - athena
+          - ecce
+        aname: [x_q2, p_eta, yRatio, single_bin]
+        recon: [Ele]
+        include: # enable other recon methods for `aname==x_q2` only
+        - { aname: x_q2, recon: Mixed,  detector: epic_latest } # FIXME: not sure how to avoid being repetitive... 
+        - { aname: x_q2, recon: JB,     detector: epic_latest }
+        - { aname: x_q2, recon: DA,     detector: epic_latest }
+        - { aname: x_q2, recon: Sigma,  detector: epic_latest }
+        - { aname: x_q2, recon: eSigma, detector: epic_latest }
+        - { aname: x_q2, recon: Mixed,  detector: epic_previous }
+        - { aname: x_q2, recon: JB,     detector: epic_previous }
+        - { aname: x_q2, recon: DA,     detector: epic_previous }
+        - { aname: x_q2, recon: Sigma,  detector: epic_previous }
+        - { aname: x_q2, recon: eSigma, detector: epic_previous }
+        - { aname: x_q2, recon: Mixed,  detector: athena }
+        - { aname: x_q2, recon: JB,     detector: athena }
+        - { aname: x_q2, recon: DA,     detector: athena }
+        - { aname: x_q2, recon: Sigma,  detector: athena }
+        - { aname: x_q2, recon: eSigma, detector: athena }
+        - { aname: x_q2, recon: Mixed,  detector: ecce   }
+        - { aname: x_q2, recon: JB,     detector: ecce   }
+        - { aname: x_q2, recon: DA,     detector: ecce   }
+        - { aname: x_q2, recon: Sigma,  detector: ecce   }
+        - { aname: x_q2, recon: eSigma, detector: ecce   }
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/download-artifact@v3
+        with:
+          name: x_build_no_delphes
+      - uses: actions/download-artifact@v3
+        with:
+          name: x_fullsim_${{matrix.detector}}
+      - uses: cvmfs-contrib/github-action-cvmfs@v3
+      - uses: eic/run-cvmfs-osg-eic-shell@main
+        env:
+          S3_ACCESS_KEY: ${{secrets.S3_ACCESS_KEY}}
+          S3_SECRET_KEY: ${{secrets.S3_SECRET_KEY}}
+        with:
+          platform-release: "jug_xl:nightly"
+          setup: environ.sh
+          run: |
+            echo "[CI] job matrix params:"
+            echo "aname = ${{matrix.aname}}"
+            echo "recon = ${{matrix.recon}}"
+            echo "[CI] cat s3files.config"
+            cat s3files.config
+            echo "[CI] ANALYSIS MACRO"
+            ${{env.root_no_delphes}} 'macro/ci/analysis_${{matrix.aname}}.C("s3files.config","${{matrix.detector}}.${{matrix.aname}}.${{matrix.recon}}","${{matrix.recon}}")'
+      - uses: actions/upload-artifact@v3
+        with:
+          name: analysis
+          retention-days: 7
+          path: out
+
+# POSTPROCESS ---------------------------------------------------------------------------
+
+# run postprocess macros matrix for fastsim and fullsim
+  postprocess:
+    needs: 
+      - analysis_fastsim
+      - analysis_fullsim
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mode:
+          - fastsim
+          - epic_latest
+          - epic_previous
+          - athena
+          - ecce
+        pname: # list only jobs which will only use one (primary) recon method
+          - bin_test
+          - coverage2D_p_eta
+          - y_minima
+          - q2_weights_test
+          - eta_vs_p_forPID
+        recon: [Ele] # primary recon method(s)
+        include:
+          # use only primary recon method
+          - { pname: bin_test,         aname: x_q2,       pmacro: postprocess_bin_test.C        }
+          - { pname: coverage2D_p_eta, aname: p_eta,      pmacro: postprocess_p_eta.C           }
+          - { pname: y_minima,         aname: yRatio,     pmacro: postprocess_yRatio.C          }
+          - { pname: q2_weights_test,  aname: single_bin, pmacro: postprocess_q2_weights.C      }
+          - { pname: eta_vs_p_forPID,  aname: single_bin, pmacro: postprocess_eta_vs_p_forPID.C }
+          # use all reconstruction methods: # FIXME: not sure how to avoid being repetitive... 
+          - { mode: fastsim,       pname: coverage2D_x_q2, recon: Ele,    aname: x_q2, pmacro: postprocess_x_q2.C }
+          - { mode: fastsim,       pname: coverage2D_x_q2, recon: DA,     aname: x_q2, pmacro: postprocess_x_q2.C }
+          - { mode: fastsim,       pname: coverage2D_x_q2, recon: eSigma, aname: x_q2, pmacro: postprocess_x_q2.C }
+          - { mode: fastsim,       pname: coverage2D_x_q2, recon: JB,     aname: x_q2, pmacro: postprocess_x_q2.C }
+          - { mode: fastsim,       pname: coverage2D_x_q2, recon: Mixed,  aname: x_q2, pmacro: postprocess_x_q2.C }
+          - { mode: fastsim,       pname: coverage2D_x_q2, recon: Sigma,  aname: x_q2, pmacro: postprocess_x_q2.C }
+          - { mode: epic_latest,   pname: coverage2D_x_q2, recon: Ele,    aname: x_q2, pmacro: postprocess_x_q2.C }
+          - { mode: epic_latest,   pname: coverage2D_x_q2, recon: DA,     aname: x_q2, pmacro: postprocess_x_q2.C }
+          - { mode: epic_latest,   pname: coverage2D_x_q2, recon: eSigma, aname: x_q2, pmacro: postprocess_x_q2.C }
+          - { mode: epic_latest,   pname: coverage2D_x_q2, recon: JB,     aname: x_q2, pmacro: postprocess_x_q2.C }
+          - { mode: epic_latest,   pname: coverage2D_x_q2, recon: Mixed,  aname: x_q2, pmacro: postprocess_x_q2.C }
+          - { mode: epic_latest,   pname: coverage2D_x_q2, recon: Sigma,  aname: x_q2, pmacro: postprocess_x_q2.C }
+          - { mode: epic_previous, pname: coverage2D_x_q2, recon: Ele,    aname: x_q2, pmacro: postprocess_x_q2.C }
+          - { mode: epic_previous, pname: coverage2D_x_q2, recon: DA,     aname: x_q2, pmacro: postprocess_x_q2.C }
+          - { mode: epic_previous, pname: coverage2D_x_q2, recon: eSigma, aname: x_q2, pmacro: postprocess_x_q2.C }
+          - { mode: epic_previous, pname: coverage2D_x_q2, recon: JB,     aname: x_q2, pmacro: postprocess_x_q2.C }
+          - { mode: epic_previous, pname: coverage2D_x_q2, recon: Mixed,  aname: x_q2, pmacro: postprocess_x_q2.C }
+          - { mode: epic_previous, pname: coverage2D_x_q2, recon: Sigma,  aname: x_q2, pmacro: postprocess_x_q2.C }
+          - { mode: athena,        pname: coverage2D_x_q2, recon: Ele,    aname: x_q2, pmacro: postprocess_x_q2.C }
+          - { mode: athena,        pname: coverage2D_x_q2, recon: DA,     aname: x_q2, pmacro: postprocess_x_q2.C }
+          - { mode: athena,        pname: coverage2D_x_q2, recon: eSigma, aname: x_q2, pmacro: postprocess_x_q2.C }
+          - { mode: athena,        pname: coverage2D_x_q2, recon: JB,     aname: x_q2, pmacro: postprocess_x_q2.C }
+          - { mode: athena,        pname: coverage2D_x_q2, recon: Mixed,  aname: x_q2, pmacro: postprocess_x_q2.C }
+          - { mode: athena,        pname: coverage2D_x_q2, recon: Sigma,  aname: x_q2, pmacro: postprocess_x_q2.C }
+          - { mode: ecce,          pname: coverage2D_x_q2, recon: Ele,    aname: x_q2, pmacro: postprocess_x_q2.C }
+          - { mode: ecce,          pname: coverage2D_x_q2, recon: DA,     aname: x_q2, pmacro: postprocess_x_q2.C }
+          - { mode: ecce,          pname: coverage2D_x_q2, recon: eSigma, aname: x_q2, pmacro: postprocess_x_q2.C }
+          - { mode: ecce,          pname: coverage2D_x_q2, recon: JB,     aname: x_q2, pmacro: postprocess_x_q2.C }
+          - { mode: ecce,          pname: coverage2D_x_q2, recon: Mixed,  aname: x_q2, pmacro: postprocess_x_q2.C }
+          - { mode: ecce,          pname: coverage2D_x_q2, recon: Sigma,  aname: x_q2, pmacro: postprocess_x_q2.C }
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/download-artifact@v3
+        with:
+          name: x_build_no_delphes
+      - uses: actions/download-artifact@v3
+        with:
+          name: analysis
+          path: out
+      - uses: cvmfs-contrib/github-action-cvmfs@v3
+      - uses: eic/run-cvmfs-osg-eic-shell@main
+        with:
+          platform-release: "jug_xl:nightly"
+          setup: environ.sh
+          run: |
+            echo "[CI] job matrix params:"
+            echo "aname = ${{matrix.aname}}"
+            echo "pname = ${{matrix.pname}}"
+            echo "mode = ${{matrix.mode}}"
+            echo "recon = ${{matrix.recon}}"
+            echo "pmacro = ${{matrix.pmacro}}"
+            echo "[CI] POSTPROCESS MACRO"
+            ls out
+            mv -v out/${{matrix.mode}}.{${{matrix.aname}},${{matrix.pname}}}.${{matrix.recon}}.root # rename aname -> pname
+            ${{env.root_no_delphes}} 'macro/ci/${{matrix.pmacro}}("out/${{matrix.mode}}.${{matrix.pname}}.${{matrix.recon}}.root")'
+            rm -v out/${{matrix.mode}}.${{matrix.pname}}.${{matrix.recon}}.root # rm analysis_root artifact
+      - uses: actions/upload-artifact@v3
+        with:
+          name: postprocess
+          retention-days: 30
+          path: |
+            out/*.images/*.png
+            out/*.root
+
+# COMPARATORS ---------------------------------------------------------------------------
+
+# run compare macros matrix for fastsim vs. fullsim
+  comparison:
+    needs:
+      - analysis_fastsim
+      - analysis_fullsim
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        pname: # list only jobs which will only use one (primary) recon method
+          - coverage_p_eta
+          - resolution_p_eta
+        recon: [Ele] # primary recon method(s)
+        include:
+          # use only primary recon method
+          - { pname: coverage_p_eta,   aname: p_eta, xvar: p, yvar: eta }
+          - { pname: resolution_p_eta, aname: p_eta, xvar: p, yvar: eta }
+          # use all reconstruction methods:
+          ## resolution
+          - { pname: resolution_x_q2, recon: Ele,    aname: x_q2, xvar: x, yvar: q2 }
+          - { pname: resolution_x_q2, recon: Mixed,  aname: x_q2, xvar: x, yvar: q2 }
+          - { pname: resolution_x_q2, recon: DA,     aname: x_q2, xvar: x, yvar: q2 }
+          - { pname: resolution_x_q2, recon: JB,     aname: x_q2, xvar: x, yvar: q2 }
+          - { pname: resolution_x_q2, recon: Sigma,  aname: x_q2, xvar: x, yvar: q2 }
+          - { pname: resolution_x_q2, recon: eSigma, aname: x_q2, xvar: x, yvar: q2 }
+          ## coverage
+          - { pname: coverage_x_q2,   recon: Ele,    aname: x_q2, xvar: x, yvar: q2 }
+          - { pname: coverage_x_q2,   recon: Mixed,  aname: x_q2, xvar: x, yvar: q2 }
+          - { pname: coverage_x_q2,   recon: DA,     aname: x_q2, xvar: x, yvar: q2 }
+          - { pname: coverage_x_q2,   recon: JB,     aname: x_q2, xvar: x, yvar: q2 }
+          - { pname: coverage_x_q2,   recon: Sigma,  aname: x_q2, xvar: x, yvar: q2 }
+          - { pname: coverage_x_q2,   recon: eSigma, aname: x_q2, xvar: x, yvar: q2 }
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/download-artifact@v3
+        with:
+          name: x_build_no_delphes
+      - uses: actions/download-artifact@v3
+        with:
+          name: analysis
+          path: out
+      - uses: cvmfs-contrib/github-action-cvmfs@v3
+      - uses: eic/run-cvmfs-osg-eic-shell@main
+        with:
+          platform-release: "jug_xl:nightly"
+          setup: environ.sh
+          run: |
+            echo "[CI] job matrix params:"
+            echo "aname = ${{matrix.aname}}"
+            echo "pname = ${{matrix.pname}}"
+            echo "recon = ${{matrix.recon}}"
+            echo "xvar = ${{matrix.xvar}}"
+            echo "yvar = ${{matrix.yvar}}"
+            echo "[CI] COMPARATOR MACRO: ePIC"
+            macro/ci/comparator_run.sh ${{matrix.aname}} ${{matrix.pname}} ${{matrix.recon}} ${{matrix.xvar}} ${{matrix.yvar}} \
+              "ePIC Latest"   "epic_latest"   \
+              "ePIC Previous" "epic_previous" \
+              "ECCE"          "ecce"          \
+              "Delphes"       "fastsim"       \
+              "epic_productions"
+            # echo "[CI] COMPARATOR MACRO: LEGACY"
+            # macro/ci/comparator_run.sh ${{matrix.aname}} ${{matrix.pname}} ${{matrix.recon}} ${{matrix.xvar}} ${{matrix.yvar}} \
+            #   "Delphes Pythia6 (no radcor)" "fastsim"     \
+            #   "ePIC Arches (no radcor)"     "epic_latest" \
+            #   "ATHENA"                      "athena"      \
+            #   "ECCE"                        "ecce"        \
+            #   "LEGACY"
+      - uses: actions/upload-artifact@v3
+        with:
+          name: comparison
+          retention-days: 30
+          path: |
+            out/comparison*.images/*.png
+            out/comparison*.root
+
+# ARTIFACTS ---------------------------------------------------------------------------
+
+# collect artifacts into one directory
+  collect:
+    needs: 
+      - postprocess
+      - comparison
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/download-artifact@v3
+        with:
+          name: postprocess
+          path: results
+      - uses: actions/download-artifact@v3
+        with:
+          name: comparison
+          path: results
+      - name: tree_artifacts
+        run: tree results
+      - name: cull
+        run: |
+          find results -name "*.root" -print | xargs rm -v
+          rm -v results/*y_minima*/canv*.png
+          tree results
+      - name: rename-dirs
+        run: |
+          for d in $(ls -d results/*.images); do \
+            d=$(echo $d | sed 's;/$;;'); \
+            mv -v $d $(echo $d | sed 's;\.images$;;'); \
+          done
+          tree results
+      - name: merge_recon
+        run: |
+          macro/ci/merge-recon.sh results resolution_x_q2
+          macro/ci/merge-recon.sh results coverage_x_q2
+          macro/ci/merge-recon.sh results coverage2D_x_q2
+          tree results
+      - name: merge_fastfull
+        run: |
+          macro/ci/merge-fastfull.sh results \
+            epic_latest   \
+            epic_previous \
+            ecce          \
+            athena
+          tree results
+      - uses: actions/upload-artifact@v3
+        with:
+          retention-days: 90
+          name: _FULL_RESULTS
+          path: results

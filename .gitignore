@@ -1,0 +1,37 @@
+# main ignores
+.*.sw*
+*~
+*.hepmc*
+*.root
+*.pcm
+*.so
+*.o
+*.exe
+*.tmp
+*.zip
+*Dict.cxx
+tags
+
+# input/output directories
+out/*
+!out/.keep
+datagen/*
+!datagen/.keep
+datarec/*
+!datarec/.keep
+!datarec/xsec
+!datarec/trimTree.C
+results*
+
+# tmp files
+tutorial/*.config*
+get-files.sh
+*.xsec
+*.config.part
+valgrind.log
+hpc/log
+
+# environment setup files
+external
+*.sif
+container/img

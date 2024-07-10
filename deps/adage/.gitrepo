@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/git-commands/git-subrepo#readme
+;
+[subrepo]
+	remote = git@github.com:c-dilks/adage.git
+	branch = main
+	commit = 54c1de428795b6f6e938911deade88177ea91e98
+	parent = 0eecfe224989ac5205fb150b10c5ec3e8ba54fb8
+	method = merge
+	cmdver = 0.4.6
