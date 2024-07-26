@@ -212,6 +212,22 @@ void Kinematics::CalculateR2new(){
    R2new = (this->qT) * (this->qT) / (this->Q2);
 }
 
+void Kinematics::CalculateR3(){
+  auto kx = (this->kiLab) + (this->vecQ) - (this->kfLab);
+  R3 = abs(kx * kx) / (this->Q2);
+}
+
+void Kinematics::CalculateR4(){
+  auto k = kfLab - vecQ;
+  auto R41 = abs((kiLab * kiLab) / (k * k));
+  auto R42 = abs((kfLab * kfLab) / (k * k));
+  auto R43 = abs((exp(this->yh) * (exp(this->yh))) / (k * k));
+  auto R44 = abs((kiLab.Perp2())/ (k * k));
+  auto R4x1 = std::max(R41,R42);
+  auto R4x2 = std::max(R43,R44);
+  R4 = std::max(R4x1,R4x2);
+}
+
 void Kinematics::Calculateyh(){
    yh = 0.5 * log(vecHadron.Plus() / vecHadron.Minus());
 }
@@ -221,6 +237,10 @@ void Kinematics::QuarkMomentumCheck(){
    k2 = k * k;
    ki2 = kiLab * kiLab;
    kf2 = kfLab * kfLab;
+}
+
+void Kinematics::setqTQ(){
+   qT_Q = this->qT / sqrt(this->Q2);
 }
 
 
@@ -631,8 +651,10 @@ void Kinematics::CalculateHadronKinematics() {
       CvecHadron.Vect(),
       CvecQ.Vect()
       ).Mag();
+  this->BoostToComFrame(vecIonBeam, CvecIonBeam);
+  double ztest = CvecIonBeam.Dot(vecHadron) / CvecIonBeam.Dot(CvecQ);
   // qT
-  qT = pT / z;
+  qT = pT / ztest;
 };
 
 // validate transformations to the head-on frame

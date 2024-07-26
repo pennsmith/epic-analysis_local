@@ -40,12 +40,15 @@ SidisTree::SidisTree(TString treeName_, std::shared_ptr<Kinematics> K_, std::sha
   T->Branch("R1",        &(Ktrue->R1),        "R1/D");
   T->Branch("R2",        &(Ktrue->R2),        "R2/D");
   T->Branch("R2new",     &(Ktrue->R2new),     "R2new/D"); 
+  T->Branch("R3",        &(Ktrue->R3),        "R3/D");
+  T->Branch("R4",        &(Ktrue->R4),        "R4/D");
   T->Branch("qT",        &(K->qT),            "qT/D");
   T->Branch("yh",        &(Ktrue->yh),        "yh/D");
   T->Branch("ki2",       &(Ktrue->ki2),       "ki2/D");
   T->Branch("kf2",       &(Ktrue->kf2),       "kf2/D");
   T->Branch("k2",       &(Ktrue->k2),       "k2/D");
-  T->Branch("q2",       &(Ktrue->q2),       "q2/D"); 
+  T->Branch("q2",       &(Ktrue->q2),       "q2/D");
+  T->Branch("qT/Q",     &(Ktrue->qT_Q),     "qT_Q/D"); 
   T->Branch("ki",       &(Ktrue->kiLab));
   T->Branch("kf",        &(Ktrue->kfLab));
   T->Branch("k",        &(Ktrue->k));

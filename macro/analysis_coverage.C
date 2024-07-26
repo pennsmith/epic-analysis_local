@@ -8,8 +8,8 @@ R__LOAD_LIBRARY(EpicAnalysis)
  * - observe how the resulting histograms differ in each (x,Q2) bin
  */
 void analysis_coverage(
-    TString configFile="macro/2kcoverage.config", /* */
-    TString outfilePrefix="2kcoverage" /* output filename prefix*/
+    TString configFile="macro/10x100-2k.config", /* */
+    TString outfilePrefix="10x100-2k" /* output filename prefix*/
 ) {
 
   // setup analysis ========================================

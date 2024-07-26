@@ -100,8 +100,8 @@ class Kinematics
     TLorentzVector hadronSumVec;
 
     //Affinity ratios
-    Double_t R0,R1,R2,R2new;
-    Double_t yh, k2, ki2, kf2, q2;
+    Double_t R0,R1,R2,R2new,R3,R4;
+    Double_t yh, k2, ki2, kf2, q2, qT_Q;
     int R01Count, R02Count;
   
     // nucleon transverse spin; if you set this externally,
@@ -262,11 +262,14 @@ class Kinematics
     void CalculateR1();
     void CalculateR2();
     void CalculateR2new();
+    void CalculateR3();
+    void CalculateR4();
     void setK();
     void setK2();
     void setKi2();
     void setKf2();
-    void setq2(); 
+    void setq2();
+    void setqTQ(); 
 
     void QuarkMomentumCheck();
 

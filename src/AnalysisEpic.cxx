@@ -492,10 +492,15 @@ void AnalysisEpic::Execute()
     kinTrue->setKf2();  
     kinTrue->setq2();  
     kinTrue->QuarkMomentumCheck();
+    kinTrue->setqTQ();
 
     cout << "Q2 " << kinTrue->Q2 << endl;
-    cout << "q2 " << kinTrue->q2 << endl;
-   
+    //cout << "q2 " << kinTrue->q2 << endl;
+    cout << "qT " << kinTrue->qT << endl;
+    cout << "qT/Q " << kinTrue->qT_Q << endl;
+    cout << "R2new " << kinTrue->R2new << endl;
+    
+
     //cout << "R01: " << kinTrue->R01Count << endl;
     //cout << "R02: " << kinTrue->R02Count << endl;
     //cout << "Q2: " << kinTrue->Q2 << endl;
